@@ -1,62 +1,100 @@
-name: release
+name: Build and Package mkimage (CMake & CPack)
 
 on:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-and-package:
+    name: Build & Package (${{ matrix.target.name }})
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: Linux-x86_64
+            toolchain_flags: ""
+            artifact_name: mkimage-linux-archive
+          - name: Windows-x86_64
+            toolchain_flags: "-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc"
+            artifact_name: mkimage-windows-archive
+
     steps:
-    - name: checkout
-      uses: actions/checkout@v1
-    - name: initialize
-      run: |
-        sudo -E apt-get -y install build-essential python iasl lzop unifont autopoint bison flex gettext gcc-mingw-w64 gcc-multilib
-    - name: bootstrap
-      run: |
-        mkdir -p PKG
-        ./bootstrap
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: i686-w64-mingw32 configure
-      run: |
-        ./configure --prefix=/ --target=i686-w64-mingw32 --host=i686-w64-mingw32
-    - name: i686-w64-mingw make
-      run: |
-        make
-        cp mkimage.exe PKG/mkimage.exe
-    - name: i686-w64-mingw clean
-      run: make clean
+      - name: Install dependencies & toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            gcc \
+            g++ \
+            mingw-w64 \
+            zlib1g-dev
 
-    - name: i386-gcc configure
-      run: |
-        ./configure CFLAGS=-m32
-    - name: i386-gcc make
-      run: |
-        make
-        cp mkimage PKG/mkimage.i386
-    - name: i386-gcc clean
-      run: make clean
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            ${{ matrix.target.toolchain_flags }}
 
-    - name: x86_64-gcc configure
-      run: |
-        ./configure
-    - name: x86_64-gcc make
-      run: |
-        make
-        cp mkimage PKG/mkimage
-    - name: x86_64-gcc clean
-      run: make clean
+      - name: Build Project
+        run: |
+          cmake --build build --config Release
 
-    - name: upload
-      uses: marvinpinto/action-automatic-releases@latest
-      with:
-        repo_token: "${{ secrets.GITHUB_TOKEN }}"
-        automatic_release_tag: "latest"
-        prerelease: false
-        title: "Development Build"
-        files: |
-          PKG/mkimage.exe
-          PKG/mkimage
-          PKG/mkimage.i386
+      - name: Package with CPack
+        run: |
+          cd build
+          cpack -C Release
+
+      - name: Prepare Artifacts for Upload
+        run: |
+          mkdir -p dist
+          find build -maxdepth 1 \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} dist/ \;
+          
+          if [ -z "$(ls -A dist)" ]; then
+            echo "Error: CPack failed to generate package archives!"
+            exit 1
+          fi
+          echo "*Verification:* CPack successfully generated archives:"
+          ls -la dist/
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target.artifact_name }}
+          path: dist/*
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build-and-package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets
+
+      - name: Flatten directory & generate SHA256SUMS
+        run: |
+          mkdir -p final_release
+          find release_assets -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} final_release/ \;
+          
+          cd final_release
+          sha256sum * > SHA256SUMS
+          
+          echo "Generated SHA256SUMS content:"
+          cat SHA256SUMS
+
+      - name: Publish Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: final_release/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
