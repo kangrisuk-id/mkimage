@@ -24,3 +24,33 @@ mkimage [OPTION...]
 mkimage -p /efi/grub -o BOOTX64.EFI -O x86_64-efi -c menu.lst -f unifont.gz -m grub4dos.mod
 ```
 
+## 🛠️ Building and Installation
+
+Proyek ini telah diperbarui menggunakan **CMake** sebagai sistem *build* utama untuk menggantikan Autotools, memungkinkan proses kompilasi yang lebih cepat, bersih, dan *cross-platform*.
+
+### Prasyarat
+
+Pastikan *toolchain* berikut telah terpasang di sistem Anda:
+
+* **CMake** (v3.16 atau yang lebih baru)
+* **GCC** / **Clang** / **MinGW-w64**
+* **Ninja** atau **Make**
+* **ZLIB** (Opsional, untuk kompresi modul)
+
+---
+
+### 1. Build Lokal di Linux / macOS
+
+```bash
+# 1. Clone repositori
+git clone [https://github.com/](https://github.com/)<username>/mkimage.git
+cd mkimage
+
+# 2. Konfigurasi build menggunakan CMake
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+# 3. Kompilasi biner
+cmake --build build
+
+# 4. (Opsional) Install biner ke sistem
+sudo cmake --install build
